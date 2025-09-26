@@ -1,0 +1,15 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\PaymentsProcessorService.Infra.Integration.PaymentService\PaymentsProcessorService.Infra.Integration.PaymentService.csproj" />
+    <ProjectReference Include="..\PaymentsProcessorService.Domain\PaymentsProcessorService.Domain.csproj" />
+    <ProjectReference Include="..\PaymentsProcessorService.Infra.Data.EF\PaymentsProcessorService.Infra.Data.EF.csproj" />
+  </ItemGroup>
+
+</Project>
