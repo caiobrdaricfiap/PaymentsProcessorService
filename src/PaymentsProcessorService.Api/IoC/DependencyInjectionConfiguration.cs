@@ -1,6 +1,6 @@
 ﻿using FiapCloudGames.Infrastructure.Repositories;
 using FiapCloudGameWebAPI.Domain.Interfaces.Repositories;
-using Payments.Application.Services;
+using PaymentsProcessorService.Application.Services;
 using PaymentsProcessorService.Infra.Integration.PaymentService;
 
 namespace PaymentsProcessorService.Api.IoC
@@ -11,6 +11,7 @@ namespace PaymentsProcessorService.Api.IoC
         {
             services.AddRepositories();
             services.AddServices();
+            services.AddHttpClient();
             return services;
         }
 
@@ -25,6 +26,7 @@ namespace PaymentsProcessorService.Api.IoC
         {
             services.AddScoped<PaymentService>();
             services.AddScoped<PaymentServiceIntegration>();
+            services.AddScoped<SendEmailStatusFunction>();
             return services;
         }
     }

@@ -3,190 +3,165 @@ using FiapCloudGameWebAPI.Domain.Interfaces.Repositories;
 using Payments.Domain.Enums;
 using Payments.Domain.Models;
 using PaymentsProcessorService.Application.DTOs;
+using PaymentsProcessorService.Domain.Mappers;
 using PaymentsProcessorService.Infra.Integration.PaymentService;
 
-namespace Payments.Application.Services
+namespace PaymentsProcessorService.Application.Services;
+
+public class PaymentService
 {
-    public class PaymentService
+    private readonly IPaymentStatusChangedEventRepository _paymentStatusChangedEventRepository;
+    private readonly IPaymentCreatedEventRepository _paymentCreatedEventRepository;
+    private readonly PaymentServiceIntegration _paymentServiceIntegration;
+    private readonly SendEmailStatusFunction _sendEmailStatusFunction;
+
+    public PaymentService(IPaymentStatusChangedEventRepository paymentStatusChangedEventRepository, IPaymentCreatedEventRepository paymentCreatedEventRepository, PaymentServiceIntegration paymentServiceIntegration, SendEmailStatusFunction sendEmailStatusFunction)
     {
-        private readonly IPaymentStatusChangedEventRepository _paymentStatusChangedEventRepository;
-        private readonly IPaymentCreatedEventRepository _paymentCreatedEventRepository;
-        private readonly PaymentServiceIntegration _paymentServiceIntegration;
+        _paymentStatusChangedEventRepository = paymentStatusChangedEventRepository;
+        _paymentCreatedEventRepository = paymentCreatedEventRepository;
+        _paymentServiceIntegration = paymentServiceIntegration;
+        _sendEmailStatusFunction = sendEmailStatusFunction;
+    }
 
-        public PaymentService(IPaymentStatusChangedEventRepository paymentStatusChangedEventRepository, IPaymentCreatedEventRepository paymentCreatedEventRepository, PaymentServiceIntegration paymentServiceIntegration)
+    public async Task<ApiResponse> ProcessAsync(PaymentProcessInputDto dto)
+    {
+        try
         {
-            _paymentStatusChangedEventRepository = paymentStatusChangedEventRepository;
-            _paymentCreatedEventRepository = paymentCreatedEventRepository;
-            _paymentServiceIntegration = paymentServiceIntegration;
-        }
+            PaymentCreatedEvent? paymentCreatedEvent;
 
-        public async Task<ApiResponse> ProcessAsync(PaymentProcessInputDto dto)
-        {
-            try
+            paymentCreatedEvent = await _paymentCreatedEventRepository
+                .GetFirstOrDefaultByConditionAsync(e =>
+                    e.UserId == dto.UserId &&
+                    e.GameId == dto.GameId);
+
+            if (paymentCreatedEvent is not null)
             {
-                PaymentCreatedEvent? paymentCreatedEvent;
+                var updatedEvent = await _paymentStatusChangedEventRepository
+                    .GetFirstOrDefaultByConditionAsync(p =>
+                    p.PaymentId == paymentCreatedEvent.Id &&
+                    p.NewStatus != PaymentStatus.Failed);
 
-                paymentCreatedEvent = await _paymentCreatedEventRepository
-                    .GetFirstOrDefaultByConditionAsync(e =>
-                        e.UserId == dto.UserId &&
-                        e.GameId == dto.GameId);
+                if (updatedEvent != null)
+                    return ApiResponse.Fail("Já existe um pagamento em processamente ou o jogador já possui o jogo.");
+            }
 
-                if (paymentCreatedEvent is not null)
-                {
-                    var updatedEvent = await _paymentStatusChangedEventRepository
-                        .GetFirstOrDefaultByConditionAsync(p =>
-                        p.PaymentId == paymentCreatedEvent.Id &&
-                        p.NewStatus != PaymentStatus.Failed);
+            paymentCreatedEvent = dto.ToEntity(PaymentStatus.Processing);
 
-                    if (updatedEvent != null)
-                        return ApiResponse.Fail("Já existe um pagamento em processamente ou o jogador já possui o jogo.");
-                }
+            var eventCreated = await _paymentCreatedEventRepository.AddAsync(paymentCreatedEvent);
 
-                paymentCreatedEvent = new()
-                {
-                    UserId = dto.UserId,
-                    GameId = dto.GameId,
-                    Amount = dto.Amount,
-                    Currency = dto.Currency,
-                    Status = PaymentStatus.Processing,
-                    CreatedAt = DateTime.UtcNow
-                };
+            await _paymentStatusChangedEventRepository.AddAsync(new PaymentStatusChangedEvent
+            {
+                PaymentId = eventCreated.Id,
+                OldStatus = 0,
+                NewStatus = PaymentStatus.Processing,
+                ChangedAt = DateTime.UtcNow
+            });
 
-                var eventCreated = await _paymentCreatedEventRepository.AddAsync(paymentCreatedEvent);
+            await _sendEmailStatusFunction.SendEmailStatusAsync(dto.UserId, eventCreated.Status.ToString(), "Pagamento em processamento");
 
-                await _paymentStatusChangedEventRepository.AddAsync(new PaymentStatusChangedEvent
+            // Simular integração com gateway de pagamento
+            var result = _paymentServiceIntegration.ProcessPayment(eventCreated);
+
+            if (result.Success)
+            {
+                await _paymentStatusChangedEventRepository.AddAsync(new()
                 {
                     PaymentId = eventCreated.Id,
-                    OldStatus = 0,
-                    NewStatus = PaymentStatus.Processing,
+                    OldStatus = eventCreated.Status,
+                    NewStatus = PaymentStatus.Processed,
+                    Observation = result.Message,
                     ChangedAt = DateTime.UtcNow
                 });
 
-                // Simular integração com gateway de pagamento
-                var result = _paymentServiceIntegration.ProcessPayment(eventCreated);
-
-                if (result.Success)
-                {
-                    await _paymentStatusChangedEventRepository.AddAsync(new()
-                    {
-                        PaymentId = eventCreated.Id,
-                        OldStatus = eventCreated.Status,
-                        NewStatus = PaymentStatus.Processed,
-                        Observation = result.Message,
-                        ChangedAt = DateTime.UtcNow
-                    });
-                }
-                else
-                {
-                    await _paymentStatusChangedEventRepository.AddAsync(new()
-                    {
-                        PaymentId = eventCreated.Id,
-                        OldStatus = eventCreated.Status,
-                        NewStatus = PaymentStatus.Failed,
-                        Observation = result.Message,
-                        ChangedAt = DateTime.UtcNow
-                    });
-                }
-
-                return ApiResponse.Ok(eventCreated.Id.ToString(), "Processo finalizado");
+                await _sendEmailStatusFunction.SendEmailStatusAsync(dto.UserId, PaymentStatus.Processed.ToString(), result.Message);
             }
-            catch (Exception e)
+            else
             {
-                return ApiResponse.Fail(e.Message);
+                await _paymentStatusChangedEventRepository.AddAsync(new()
+                {
+                    PaymentId = eventCreated.Id,
+                    OldStatus = eventCreated.Status,
+                    NewStatus = PaymentStatus.Failed,
+                    Observation = result.Message,
+                    ChangedAt = DateTime.UtcNow
+                });
+
+                await _sendEmailStatusFunction.SendEmailStatusAsync(dto.UserId, PaymentStatus.Failed.ToString(), result.Message);
             }
+
+            return ApiResponse.Ok(eventCreated.Id.ToString(), "Processo finalizado");
         }
-
-        public async Task<ApiResponse> GetByIdAsync(string id)
+        catch (Exception e)
         {
-            try
+            return ApiResponse.Fail(e.Message);
+        }
+    }
+
+    public async Task<ApiResponse> GetByIdAsync(string id)
+    {
+        try
+        {
+            if (!Guid.TryParse(id, out var guidId))
+                return ApiResponse.Fail($"Id da transação ID: {id} é invalido");
+
+            var createdEvent = await _paymentCreatedEventRepository.GetAsync(guidId);
+
+            if (createdEvent == null)
+                return ApiResponse.Fail($"Nenhuma transação encontrada com o ID: {id}");
+
+            var statusEvents = await _paymentStatusChangedEventRepository
+                .GetListByConditionAsync(e => e.PaymentId == guidId);
+
+            var paymentOutputDto = createdEvent.ToOutputDto();
+
+            foreach (var statusEvent in statusEvents.OrderBy(e => e.ChangedAt))
             {
-                if (!Guid.TryParse(id, out var guidId))
-                    return ApiResponse.Fail($"Id da transação ID: {id} é invalido");
+                paymentOutputDto.Status = statusEvent.NewStatus.ToString();
+                paymentOutputDto.UpdatedAt = statusEvent.ChangedAt;
+                paymentOutputDto.Observation = statusEvent.Observation;
+            }
 
-                var createdEvent = await _paymentCreatedEventRepository.GetAsync(guidId);
+            return ApiResponse.Ok(paymentOutputDto);
+        }
+        catch (Exception e)
+        {
+            return ApiResponse.Fail(e.Message);
+        }
+    }
 
-                if (createdEvent == null)
-                    return ApiResponse.Fail($"Nenhuma transação encontrada com o ID: {id}");
+    public async Task<ApiResponse> GetAllByUserAsync(int userId)
+    {
+        try
+        {
+            var createdEvents = await _paymentCreatedEventRepository.GetListByConditionAsync(e => e.UserId == userId);
 
-                // 2. Recupera todos os eventos de alteração de status para esse pagamento
+            if (createdEvents == null || !createdEvents.Any())
+                return ApiResponse.Fail($"Nenhuma transação encontrada para o usuario ID: {userId}");
+
+            var payments = new List<PaymentOutputDto>();
+
+            foreach (var createdEvent in createdEvents)
+            {
                 var statusEvents = await _paymentStatusChangedEventRepository
-                    .GetListByConditionAsync(e => e.PaymentId == guidId);
+                    .GetListByConditionAsync(e => e.PaymentId == createdEvent.Id);
 
-                // 3. Reconstrói o estado do pagamento
-                var payment = new PaymentOutputDto
-                {
-                    Id = createdEvent.Id,
-                    UserId = createdEvent.UserId,
-                    GameId = createdEvent.GameId,
-                    Amount = createdEvent.Amount,
-                    Currency = createdEvent.Currency.ToString(),
-                    Observation = createdEvent.Observation,
-                    CreatedAt = createdEvent.CreatedAt,
-                    UpdatedAt = createdEvent.CreatedAt
-                };
+                var paymentOutputDto = createdEvent.ToOutputDto();
 
-                // Aplica os eventos de status em ordem cronológica
                 foreach (var statusEvent in statusEvents.OrderBy(e => e.ChangedAt))
                 {
-                    payment.Status = statusEvent.NewStatus.ToString();
-                    payment.UpdatedAt = statusEvent.ChangedAt;
+                    paymentOutputDto.Status = statusEvent.NewStatus.ToString();
+                    paymentOutputDto.UpdatedAt = statusEvent.ChangedAt;
+                    paymentOutputDto.Observation = statusEvent.Observation;
                 }
 
-                return ApiResponse.Ok(payment);
+                payments.Add(paymentOutputDto);
             }
-            catch (Exception e)
-            {
-                return ApiResponse.Fail(e.Message);
-            }
+
+            return ApiResponse.Ok(payments);
         }
-
-        public async Task<ApiResponse> GetAllByUserAsync(int userId)
+        catch (Exception e)
         {
-            try
-            {
-                // 1. Recupera todos os eventos de criação do usuário
-                var createdEvents = await _paymentCreatedEventRepository.GetListByConditionAsync(e => e.UserId == userId);
-
-                if (createdEvents == null || !createdEvents.Any())
-                    return ApiResponse.Fail($"Nenhuma transação encontrada para o usuario ID: {userId}");
-
-                var payments = new List<PaymentOutputDto>();
-
-                foreach (var createdEvent in createdEvents)
-                {
-                    // 2. Recupera todos os eventos de alteração de status para esse pagamento
-                    var statusEvents = await _paymentStatusChangedEventRepository
-                        .GetListByConditionAsync(e => e.PaymentId == createdEvent.Id);
-
-                    // 3. Reconstrói o estado do pagamento
-                    var payment = new PaymentOutputDto
-                    {
-                        UserId = createdEvent.UserId,
-                        GameId = createdEvent.GameId,
-                        Amount = createdEvent.Amount,
-                        Currency = createdEvent.Currency.ToString(),
-                        Observation = createdEvent.Observation,
-                        Id = createdEvent.Id,
-                        CreatedAt = createdEvent.CreatedAt,
-                        UpdatedAt = createdEvent.CreatedAt
-                    };
-
-                    foreach (var statusEvent in statusEvents.OrderBy(e => e.ChangedAt))
-                    {
-                        payment.Status = statusEvent.NewStatus.ToString();
-                        payment.UpdatedAt = statusEvent.ChangedAt;
-                    }
-
-                    payments.Add(payment);
-                }
-
-                return ApiResponse.Ok(payments);
-
-            }
-            catch (Exception e)
-            {
-                return ApiResponse.Fail(e.Message);
-            }
+            return ApiResponse.Fail(e.Message);
         }
     }
 }

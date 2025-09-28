@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
-using Payments.Application.Services;
 using PaymentsProcessorService.Application.DTOs;
+using PaymentsProcessorService.Application.Services;
 
 namespace PaymentsProcessorService.Api.Controllers
 {
