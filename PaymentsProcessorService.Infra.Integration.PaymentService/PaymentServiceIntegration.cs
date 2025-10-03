@@ -8,7 +8,7 @@ public class PaymentServiceIntegration
     {
     }
 
-    public PaymentResult ProcessPayment(PaymentCreatedEvent eventCreated)
+    public virtual PaymentResult ProcessPayment(PaymentCreatedEvent eventCreated)
     {
         var rand = new Random();
         if (rand.Next(1, 11) < 9)

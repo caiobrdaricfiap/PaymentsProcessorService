@@ -21,7 +21,7 @@ public class SendEmailStatusFunction
         _logger = logger;
     }
 
-    public async Task SendEmailStatusAsync(int userId, string status, string message)
+    public virtual async Task SendEmailStatusAsync(int userId, string status, string message)
     {
         try
         {
