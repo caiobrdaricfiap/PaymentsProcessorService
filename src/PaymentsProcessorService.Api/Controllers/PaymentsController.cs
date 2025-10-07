@@ -16,10 +16,10 @@ namespace PaymentsProcessorService.Api.Controllers
         }
 
         /// <summary>
-        /// Cadastra um novo usuário.
+        /// Processa um pagamento.
         /// </summary>
-        /// <param name="dto">Dados do usuário a ser cadastrado</param>
-        /// <returns>Usuário cadastrado</returns>
+        /// <param name="dto">Dados do pagamento a ser processado</param>
+        /// <returns>Resultado do processamento do pagamento</returns>
         [HttpPost("process")]
         public async Task<IActionResult> Process([FromBody] PaymentProcessInputDto dto)
         {
@@ -27,10 +27,10 @@ namespace PaymentsProcessorService.Api.Controllers
         }
 
         /// <summary>
-        /// Cadastra um novo usuário.
+        /// Obtém os detalhes de um pagamento pelo seu identificador.
         /// </summary>
-        /// <param name="dto">Dados do usuário a ser cadastrado</param>
-        /// <returns>Usuário cadastrado</returns>
+        /// <param name="id">Identificador do pagamento</param>
+        /// <returns>Dados do pagamento</returns>
         [HttpGet("{id}")]
         public async Task<IActionResult> Get([FromRoute] string id)
         {
@@ -38,14 +38,14 @@ namespace PaymentsProcessorService.Api.Controllers
         }
 
         /// <summary>
-        /// Cadastra um novo usuário.
+        /// Obtém todos os pagamentos realizados por um usuário.
         /// </summary>
-        /// <param name="userId">Dados do usuário a ser cadastrado</param>
-        /// <returns>Usuário cadastrado</returns>
+        /// <param name="userId">Identificador do usuário</param>
+        /// <returns>Lista de pagamentos do usuário</returns>
         [HttpGet("get-by-user/{userId}")]
         public async Task<IActionResult> GetAllByUser([FromRoute] int userId)
         {
-                return Ok(await _paymentService.GetAllByUserAsync(userId));
+            return Ok(await _paymentService.GetAllByUserAsync(userId));
         }
     }
 }
