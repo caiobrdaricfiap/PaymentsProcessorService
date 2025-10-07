@@ -1,0 +1,54 @@
+name: CI/CD - Build, Test and Deploy to Azure
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Instalar .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restaurar dependências
+        run: dotnet restore
+
+      - name: Build do projeto
+        run: dotnet build --no-restore --configuration Release
+
+      - name: Executar testes
+        run: dotnet test ./PaymentsProcessorService.UnitTests/PaymentsProcessorService.UnitTests.csproj
+
+  deploy:
+    name: Deploy para Azure
+    needs: build-and-test
+    runs-on: windows-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Publicar projeto
+        run: dotnet publish ./src/PaymentsProcessorService.Api/PaymentsProcessorService.Api.csproj -c Release -o ./publish
+
+      - name: Exibir conteúdo da pasta publicada
+        run: ls -R ./publish
+
+      - name: Deploy para Azure Web App
+        uses: azure/webapps-deploy@v2
+        with:
+          app-name: pagamento-service-app
+          publish-profile: ${{ secrets.AZURE_PUBLISH_PROFILE_PAGAMENTO_SERVICE }}
+          package: ./publish
