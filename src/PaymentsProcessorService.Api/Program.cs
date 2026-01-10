@@ -1,3 +1,4 @@
+using Prometheus;
 using FiapCloudGames.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using PaymentsProcessorService.Api.IoC;
@@ -9,16 +10,16 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
 
 builder.Services.AddDependencyInjection();
 
-// Add services to the container.
-
+// Controllers
 builder.Services.AddControllers();
-// Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
+
+// Swagger
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
+// Pipeline
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -27,8 +28,14 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
+// HTTP Metrics (Prometheus)
+app.UseHttpMetrics();
+
 app.UseAuthorization();
 
 app.MapControllers();
+
+// Endpoint /metrics (Prometheus)
+app.MapMetrics();
 
 app.Run();
